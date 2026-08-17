@@ -13,6 +13,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $check = $conn->prepare("SELECT user_id FROM users WHERE username = ?");
     $check->bind_param("s", $username);
     $check->execute();
+    
     if ($check->get_result()->num_rows > 0) {
         $message = "Username นี้มีผู้ใช้งานแล้ว";
     } else {
@@ -23,7 +24,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             echo "<script>alert('สมัครสมาชิกสำเร็จ! กรุณาเข้าสู่ระบบ'); window.location.href='login.php';</script>";
             exit;
         } else {
-            $message = "เกิดข้อผิดพลาดในการสมัครสมาชิก";
+            // แสดงข้อผิดพลาดจริงจาก MySQL เพื่อช่วยวิเคราะห์สาเหตุ
+            $message = "เกิดข้อผิดพลาดจากฐานข้อมูล: " . $stmt->error;
         }
     }
 }
@@ -40,13 +42,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         .form-group label { display: block; margin-bottom: 5px; }
         .form-group input { width: 100%; padding: 8px; box-sizing: border-box; }
         button { width: 100%; padding: 10px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; margin-top: 10px; }
-        .error { color: red; font-size: 14px; margin-bottom: 10px; }
+        .error { color: red; font-size: 14px; margin-bottom: 10px; word-break: break-all; }
     </style>
 </head>
 <body>
     <div class="card">
         <h2>สมัครสมาชิก</h2>
-        <?php if ($message): ?><p class="error"><?= $message ?></p><?php endif; ?>
+        <?php if ($message): ?>
+            <p class="error"><?= htmlspecialchars($message) ?></p>
+        <?php endif; ?>
         <form method="POST">
             <div class="form-group">
                 <label>ชื่อผู้ใช้ (Username)</label>
