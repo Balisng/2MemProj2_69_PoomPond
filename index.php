@@ -1,5 +1,6 @@
 <?php
 session_start();
+require_once 'db.php';
 ?>
 <!DOCTYPE html>
 <html lang="th">
@@ -20,12 +21,18 @@ session_start();
         #map { height: 520px; width: 100%; border-radius: 10px; }
 
         .modal-overlay { display: none; position: fixed; z-index: 9999; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; }
-        .modal-content { background: white; padding: 20px; border-radius: 8px; width: 320px; box-shadow: 0 2px 10px rgba(0,0,0,0.3); }
+        .modal-content { background: white; padding: 20px; border-radius: 8px; width: 350px; max-height: 80vh; overflow-y: auto; box-shadow: 0 2px 10px rgba(0,0,0,0.3); }
         .modal-group { margin-bottom: 15px; }
         .modal-group label { display: block; font-size: 14px; margin-bottom: 5px; font-weight: bold; }
         .modal-group input { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
         .btn-submit { width: 100%; background: #28a745; color: white; border: none; padding: 10px; border-radius: 4px; cursor: pointer; font-size: 15px; }
         .btn-cancel { width: 100%; background: #6c757d; color: white; border: none; padding: 8px; border-radius: 4px; cursor: pointer; margin-top: 5px; }
+
+        .review-item { border-bottom: 1px solid #eee; padding: 8px 0; }
+        .review-item:last-child { border-bottom: none; }
+        .review-user { font-weight: bold; font-size: 13px; color: #333; }
+        .review-stars { color: #f39c12; font-size: 12px; }
+        .review-comment { font-size: 13px; color: #555; margin-top: 3px; }
     </style>
 </head>
 <body>
@@ -56,7 +63,7 @@ session_start();
         <div id="map"></div>
     </div>
 
-    <!-- Modal เลือกวันเวลาจอง -->
+    <!-- Modal จองวันเวลา -->
     <div id="bookingModal" class="modal-overlay">
         <div class="modal-content">
             <h3 style="margin-top:0;">🗓️ จองที่จอดรถล่วงหน้า</h3>
@@ -74,7 +81,16 @@ session_start();
             </div>
             
             <button onclick="confirmBooking()" class="btn-submit">ยืนยันการจอง</button>
-            <button onclick="closeModal()" class="btn-cancel">ยกเลิก</button>
+            <button onclick="closeModal('bookingModal')" class="btn-cancel">ยกเลิก</button>
+        </div>
+    </div>
+
+    <!-- Modal ดูรีวิว -->
+    <div id="reviewsModal" class="modal-overlay">
+        <div class="modal-content">
+            <h3 style="margin-top:0;">⭐ รีวิวจากผู้ใช้งาน</h3>
+            <div id="reviewsList">กำลังโหลดรีวิว...</div>
+            <button onclick="closeModal('reviewsModal')" class="btn-cancel" style="margin-top:15px;">ปิด</button>
         </div>
     </div>
 
@@ -107,10 +123,13 @@ session_start();
         function renderMarkers(spots) {
             markersGroup.clearLayers();
             spots.forEach(spot => {
-                var ratingText = spot.avg_rating > 0 ? `⭐ ${spot.avg_rating} (${spot.total_reviews} รีวิว)` : '⭐ ยังไม่มีรีวิว';
+                var ratingBtn = spot.avg_rating > 0 
+                    ? `<span onclick="openReviewsModal(${spot.spot_id})" style="color:#f39c12; font-weight:bold; cursor:pointer; text-decoration:underline;">⭐ ${spot.avg_rating} (${spot.total_reviews} รีวิว - คลิกเพื่ออ่าน)</span>` 
+                    : '<span style="color:#888;">⭐ ยังไม่มีรีวิว</span>';
+                
                 var imgHTML = spot.image ? `<img src="uploads/${spot.image}" style="width:100%; height:110px; object-fit:cover; border-radius:6px; margin-bottom:8px;">` : '';
                 var descText = spot.description && spot.description.trim() !== '' ? spot.description : 'ไม่มีรายละเอียดเพิ่มเติม';
-                var ownerName = spot.owner_name ? spot.owner_name : 'เจ้าของที่จอด';
+                var ownerName = spot.owner_name ? spot.owner_name : 'ไม่ระบุผู้ดูแล';
                 var ownerPhone = spot.owner_phone ? spot.owner_phone : '-';
 
                 var marker = L.marker([spot.latitude, spot.longitude]);
@@ -118,7 +137,7 @@ session_start();
                     <div style="width:230px; font-family: Arial, sans-serif;">
                         ${imgHTML}
                         <h3 style="margin:0 0 5px 0; font-size:16px; color:#333;">${spot.title}</h3>
-                        <p style="margin:0 0 6px 0; color:#f39c12; font-weight:bold; font-size:13px;">${ratingText}</p>
+                        <p style="margin:0 0 6px 0; font-size:13px;">${ratingBtn}</p>
                         
                         <div style="background:#f8f9fa; padding:8px; border-radius:5px; margin-bottom:8px; font-size:12px; color:#555; line-height:1.4;">
                             <b>📌 จุดสังเกต / รายละเอียด:</b><br>${descText}
@@ -136,6 +155,35 @@ session_start();
                 marker.bindPopup(popupContent);
                 markersGroup.addLayer(marker);
             });
+        }
+
+        function openReviewsModal(spotId) {
+            var listContainer = document.getElementById('reviewsList');
+            listContainer.innerHTML = 'กำลังโหลดรีวิว...';
+            document.getElementById('reviewsModal').style.display = 'flex';
+
+            fetch(`get_reviews.php?spot_id=${spotId}`)
+                .then(res => res.json())
+                .then(reviews => {
+                    if (reviews.length === 0) {
+                        listContainer.innerHTML = '<p style="color:#777; font-size:14px;">ยังไม่มีรีวิวสำหรับสถานที่นี้</p>';
+                        return;
+                    }
+                    var html = '';
+                    reviews.forEach(r => {
+                        var stars = '⭐'.repeat(r.rating);
+                        var user = r.full_name ? r.full_name : 'ผู้ใช้งาน';
+                        var comment = r.comment ? r.comment : '<i>ไม่มีข้อความรีวิว</i>';
+                        html += `
+                            <div class="review-item">
+                                <div class="review-user">${user}</div>
+                                <div class="review-stars">${stars} (${r.rating}/5)</div>
+                                <div class="review-comment">${comment}</div>
+                            </div>
+                        `;
+                    });
+                    listContainer.innerHTML = html;
+                });
         }
 
         function filterSpots() {
@@ -162,8 +210,8 @@ session_start();
             document.getElementById('bookingModal').style.display = 'flex';
         }
 
-        function closeModal() {
-            document.getElementById('bookingModal').style.display = 'none';
+        function closeModal(modalId) {
+            document.getElementById(modalId).style.display = 'none';
         }
 
         function confirmBooking() {
@@ -190,7 +238,7 @@ session_start();
             .then(res => res.json())
             .then(data => {
                 alert(data.message);
-                closeModal();
+                closeModal('bookingModal');
                 if (data.status === 'error' && data.message.includes('เข้าสู่ระบบ')) {
                     window.location.href = 'login.php';
                 } else if (data.status === 'success') {
