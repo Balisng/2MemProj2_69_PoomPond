@@ -27,6 +27,7 @@ session_start();
             <?php if (isset($_SESSION['user_id'])): ?>
                 <span>ยินดีต้อนรับ, <b><?= htmlspecialchars($_SESSION['full_name']) ?></b></span>
                 <a href="my_bookings.php">ประวัติการจอง</a>
+                <a href="my_spots.php" style="background:#17a2b8;" class="btn">ที่จอดรถของฉัน</a>
                 <a href="logout.php" style="color: #ff6b6b;">ออกจากระบบ</a>
             <?php else: ?>
                 <a href="login.php" class="btn">เข้าสู่ระบบ</a>
@@ -62,9 +63,12 @@ session_start();
             .then(data => {
                 data.forEach(spot => {
                     var marker = L.marker([spot.latitude, spot.longitude]).addTo(map);
+                    
+                    // เพิ่มลิงก์ Google Maps Navigation ใน Pop-up
                     var popupContent = `
                         <b>${spot.title}</b><br>
-                        ราคา: ${spot.price_per_hour} บาท/ชม.<br>
+                        ราคา: ${spot.price_per_hour} บาท/ชม.<br><br>
+                        <a href="https://www.google.com/maps/dir/?api=1&destination=${spot.latitude},${spot.longitude}" target="_blank" style="display:inline-block; margin-bottom: 8px; color: #007bff; text-decoration: none; font-weight: bold;">🗺️ นำทางด้วย Google Maps</a><br>
                         <button onclick="booking(${spot.spot_id}, ${spot.price_per_hour})">จองที่จอดนี้</button>
                     `;
                     marker.bindPopup(popupContent);

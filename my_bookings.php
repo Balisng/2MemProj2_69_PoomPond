@@ -2,14 +2,14 @@
 session_start();
 require_once 'db.php';
 
-// เช็กว่าเข้าสู่ระบบหรือยัง ถ้ายังให้ไปหน้า login
 if (!isset($_SESSION['user_id'])) {
     header("Location: login.php");
     exit;
 }
 
 $user_id = $_SESSION['user_id'];
-$sql = "SELECT b.*, p.title FROM bookings b 
+// ดึงพิกัด latitude, longitude เพิ่มเติมเพื่อใช้นำทาง
+$sql = "SELECT b.*, p.title, p.latitude, p.longitude FROM bookings b 
         JOIN parking_spots p ON b.spot_id = p.spot_id 
         WHERE b.user_id = ? ORDER BY b.booking_id DESC";
 
@@ -29,6 +29,7 @@ $result = $stmt->get_result();
         th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
         th { background-color: #f2f2f2; }
         .status-pending { color: orange; font-weight: bold; }
+        .btn-map { color: #007bff; text-decoration: none; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -43,6 +44,7 @@ $result = $stmt->get_result();
             <th>เวลาสิ้นสุด</th>
             <th>ราคารวม</th>
             <th>สถานะ</th>
+            <th>นำทาง</th>
         </tr>
         <?php if ($result->num_rows > 0): ?>
             <?php while ($row = $result->fetch_assoc()): ?>
@@ -53,10 +55,13 @@ $result = $stmt->get_result();
                     <td><?= $row['end_time'] ?></td>
                     <td><?= number_format($row['total_price'], 2) ?> บาท</td>
                     <td><span class="status-pending"><?= $row['status'] ?></span></td>
+                    <td>
+                        <a href="https://www.google.com/maps/dir/?api=1&destination=<?= $row['latitude'] ?>,<?= $row['longitude'] ?>" target="_blank" class="btn-map">🗺️ นำทาง</a>
+                    </td>
                 </tr>
             <?php endwhile; ?>
         <?php else: ?>
-            <tr><td colspan="6" style="text-align:center;">ยังไม่มีรายการจอง</td></tr>
+            <tr><td colspan="7" style="text-align:center;">ยังไม่มีรายการจอง</td></tr>
         <?php endif; ?>
     </table>
 </body>
