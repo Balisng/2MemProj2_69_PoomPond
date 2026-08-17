@@ -7,75 +7,94 @@ if (!isset($_SESSION['user_id'])) {
     exit;
 }
 
-$message = '';
-$booking_id = intval($_GET['id'] ?? 0);
-$user_id = $_SESSION['user_id'];
+$booking_id = intval($_GET['booking_id'] ?? $_POST['booking_id'] ?? 0);
+$error = '';
 
-// ดึงรายละเอียดการจอง
-$stmt = $conn->prepare("SELECT b.*, p.title FROM bookings b JOIN parking_spots p ON b.spot_id = p.spot_id WHERE b.booking_id = ? AND b.user_id = ?");
-$stmt->bind_param("ii", $booking_id, $user_id);
-$stmt->execute();
-$booking = $stmt->get_result()->fetch_assoc();
-
-if (!$booking) {
-    die("ไม่พบรายการจองนี้");
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_FILES['slip_image']) && $_FILES['slip_image']['error'] === UPLOAD_ERR_OK) {
-        $ext = pathinfo($_FILES['slip_image']['name'], PATHINFO_EXTENSION);
-        $slip_name = 'slip_' . time() . '_' . uniqid() . '.' . $ext;
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['slip'])) {
+    $file = $_FILES['slip'];
+    
+    if ($file['error'] === UPLOAD_ERR_OK) {
+        $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+        $allowed = ['jpg', 'jpeg', 'png', 'webp'];
         
-        if (!is_dir('uploads')) { mkdir('uploads', 0777, true); }
-        
-        if (move_uploaded_file($_FILES['slip_image']['tmp_name'], 'uploads/' . $slip_name)) {
-            $update = $conn->prepare("UPDATE bookings SET slip_image = ?, payment_status = 'pending_approval' WHERE booking_id = ? AND user_id = ?");
-            $update->bind_param("sii", $slip_name, $booking_id, $user_id);
-            $update->execute();
-
-            echo "<script>alert('แนบสลิปเรียบร้อย รอเจ้าของอนุมัติการจอง'); window.location.href='my_bookings.php';</script>";
-            exit;
+        if (in_array($ext, $allowed)) {
+            // บังคับให้เซฟไฟล์ลงในโฟลเดอร์ uploads/slips/
+            $upload_dir = 'uploads/slips/';
+            if (!is_dir($upload_dir)) {
+                mkdir($upload_dir, 0777, true);
+            }
+            
+            $new_filename = 'slip_' . $booking_id . '_' . time() . '.' . $ext;
+            $target_path = $upload_dir . $new_filename;
+            
+            if (move_uploaded_file($file['tmp_name'], $target_path)) {
+                // บันทึกชื่อไฟล์ลง DB
+                $stmt = $conn->prepare("UPDATE bookings SET slip_image = ? WHERE booking_id = ?");
+                $stmt->bind_param("si", $new_filename, $booking_id);
+                $stmt->execute();
+                
+                header("Location: my_bookings.php");
+                exit;
+            } else {
+                $error = 'ไม่สามารถย้ายไฟล์เข้าโฟลเดอร์ uploads/slips ได้';
+            }
+        } else {
+            $error = 'อนุญาตเฉพาะไฟล์รูปภาพ (JPG, PNG, WEBP) เท่านั้น';
         }
     } else {
-        $message = "กรุณาเลือกไฟล์สลิปโอนเงิน";
+        $error = 'กรุณาเลือกไฟล์สลิปก่อนกดบันทึก';
     }
 }
+
+// ดึงข้อมูลการจอง
+$stmt = $conn->prepare("SELECT b.*, p.title, p.price_per_hour FROM bookings b JOIN parking_spots p ON b.spot_id = p.spot_id WHERE b.booking_id = ?");
+$stmt->bind_param("i", $booking_id);
+$stmt->execute();
+$booking = $stmt->get_result()->fetch_assoc();
 ?>
 <!DOCTYPE html>
 <html lang="th">
 <head>
     <meta charset="UTF-8">
-    <title>ชำระเงิน - Parking App</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background: #f8f9fa; }
-        .card { background: white; padding: 25px; border-radius: 8px; max-width: 420px; margin: 0 auto; box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center; }
-        .qr-box { background: #f1f3f5; padding: 15px; border-radius: 8px; margin: 15px 0; }
-        .btn { background: #28a745; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; width: 100%; font-size: 16px; margin-top: 10px; }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>แนบสลิปการชำระเงิน</title>
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style> body { font-family: 'Prompt', sans-serif; background-color: #f8fafc; } </style>
 </head>
 <body>
-    <div class="card">
-        <h2>💳 ชำระเงินค่าจองที่จอดรถ</h2>
-        <p>สถานที่: <b><?= htmlspecialchars($booking['title']) ?></b></p>
-        <h3 style="color:#007bff; margin:10px 0;">ยอดชำระ: <?= number_format($booking['total_price'], 2) ?> บาท</h3>
-        
-        <div class="qr-box">
-            <p style="margin-top:0;"><b>สแกน QR Code ด้านล่างเพื่อโอนเงิน</b></p>
-            <img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=PromptPay_ParkingApp_<?= $booking['total_price'] ?>" alt="QR Code">
-            <p style="font-size:12px; color:#666; margin-bottom:0;">(ระบบจำลอง PromptPay)</p>
-        </div>
+    <div class="container py-5">
+        <div class="row justify-content-center">
+            <div class="col-md-5">
+                <div class="card border-0 shadow-sm rounded-4 p-4">
+                    <h4 class="fw-bold text-center mb-3">แนบสลิปการชำระเงิน</h4>
+                    
+                    <?php if ($error): ?>
+                        <div class="alert alert-danger py-2 fs-7"><?= $error ?></div>
+                    <?php endif; ?>
 
-        <?php if ($message): ?><p style="color:red;"><?= $message ?></p><?php endif; ?>
+                    <?php if ($booking): ?>
+                        <div class="bg-light p-3 rounded-3 mb-3 border fs-7">
+                            <div class="mb-1"><b>สถานที่:</b> <?= htmlspecialchars($booking['title']) ?></div>
+                            <div><b>ยอดชำระ:</b> <span class="text-success fw-bold"><?= number_format($booking['total_price'], 2) ?> บาท</span></div>
+                        </div>
+                    <?php endif; ?>
 
-        <form method="POST" enctype="multipart/form-data">
-            <div style="text-align:left; margin-bottom:10px;">
-                <label><b>แนบรูปภาพสลิปโอนเงิน:</b></label>
-                <input type="file" name="slip_image" accept="image/*" required style="width:100%; margin-top:5px;">
+                    <form method="POST" enctype="multipart/form-data">
+                        <input type="hidden" name="booking_id" value="<?= $booking_id ?>">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">เลือกไฟล์สลิป</label>
+                            <input type="file" name="slip" class="form-control" accept="image/*" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100 fw-bold rounded-pill shadow-sm">
+                            <i class="fa-solid fa-cloud-arrow-up me-1"></i> อัปโหลดสลิป
+                        </button>
+                        <a href="my_bookings.php" class="btn btn-outline-secondary w-100 rounded-pill mt-2">ย้อนกลับ</a>
+                    </form>
+                </div>
             </div>
-            <button type="submit" class="btn">ยืนยันส่งสลิป</button>
-        </form>
-        <br>
-        <a href="my_bookings.php" style="color:#666; text-decoration:none; font-size:14px;">← กลับหน้าประวัติการจอง</a>
+        </div>
     </div>
 </body>
 </html>

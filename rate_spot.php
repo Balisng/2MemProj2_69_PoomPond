@@ -2,41 +2,30 @@
 session_start();
 require_once 'db.php';
 
-if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php");
-    exit;
-}
+if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit; }
 
+$spot_id = intval($_GET['spot_id'] ?? 0);
 $booking_id = intval($_GET['booking_id'] ?? 0);
 $user_id = $_SESSION['user_id'];
 
-// ตรวจสอบความถูกต้องของการจอง
-$stmt = $conn->prepare("SELECT b.*, p.title FROM bookings b JOIN parking_spots p ON b.spot_id = p.spot_id WHERE b.booking_id = ? AND b.user_id = ? AND b.status = 'approved'");
-$stmt->bind_param("ii", $booking_id, $user_id);
-$stmt->execute();
-$booking = $stmt->get_result()->fetch_assoc();
-
-if (!$booking) {
-    die("ไม่พบรายการจองนี้ หรือยังไม่ได้รับการอนุมัติ");
-}
-
-// ตรวจสอบว่าเคยรีวิวไปแล้วหรือยัง
-$check = $conn->prepare("SELECT review_id FROM reviews WHERE booking_id = ?");
-$check->bind_param("i", $booking_id);
-$check->execute();
-if ($check->get_result()->num_rows > 0) {
-    echo "<script>alert('คุณเคยให้คะแนนรายการนี้ไปแล้ว'); window.location.href='my_bookings.php';</script>";
-    exit;
-}
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $rating = intval($_POST['rating']);
-    $comment = trim($_POST['comment']);
+    $rating = intval($_POST['rating'] ?? 5);
+    $comment = trim($_POST['comment'] ?? '');
 
-    $insert = $conn->prepare("INSERT INTO reviews (booking_id, user_id, spot_id, rating, comment) VALUES (?, ?, ?, ?, ?)");
-    $insert->bind_param("iiiis", $booking_id, $user_id, $booking['spot_id'], $rating, $comment);
+    // เช็กว่าเคยรีวิวรายการนี้ไปแล้วหรือยัง
+    $check = $conn->prepare("SELECT review_id FROM reviews WHERE booking_id = ?");
+    $check->bind_param("i", $booking_id);
+    $check->execute();
     
-    if ($insert->execute()) {
+    if ($check->get_result()->num_rows > 0) {
+        echo "<script>alert('คุณได้รีวิวรายการนี้ไปแล้ว'); window.location.href='my_bookings.php';</script>";
+        exit;
+    }
+
+    $stmt = $conn->prepare("INSERT INTO reviews (spot_id, user_id, booking_id, rating, comment) VALUES (?, ?, ?, ?, ?)");
+    $stmt->bind_param("iiiis", $spot_id, $user_id, $booking_id, $rating, $comment);
+    
+    if ($stmt->execute()) {
         echo "<script>alert('ขอบคุณสำหรับรีวิว!'); window.location.href='my_bookings.php';</script>";
         exit;
     }
@@ -46,38 +35,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <html lang="th">
 <head>
     <meta charset="UTF-8">
-    <title>รีวิวที่จอดรถ - Parking App</title>
+    <title>ให้รีวิวสถานที่</title>
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background: #f8f9fa; }
-        .card { background: white; padding: 25px; border-radius: 8px; max-width: 400px; margin: 0 auto; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-        .star-rating { font-size: 28px; direction: rtl; display: inline-flex; justify-content: center; width: 100%; margin: 15px 0; }
+        body { font-family: 'Prompt', sans-serif; background: #f4f6f9; }
+        .star-rating { display: flex; flex-direction: row-reverse; justify-content: center; font-size: 2.2rem; }
         .star-rating input { display: none; }
-        .star-rating label { color: #ccc; cursor: pointer; padding: 0 5px; }
-        .star-rating input:checked ~ label, .star-rating label:hover, .star-rating label:hover ~ label { color: #ffc107; }
-        textarea { width: 100%; height: 80px; padding: 8px; box-sizing: border-box; margin-bottom: 15px; border-radius: 4px; border: 1px solid #ccc; }
-        button { background: #007bff; color: white; border: none; padding: 10px; border-radius: 4px; cursor: pointer; width: 100%; font-size: 16px; }
+        .star-rating label { color: #cbd5e1; cursor: pointer; padding: 0 5px; }
+        .star-rating input:checked ~ label, .star-rating label:hover, .star-rating label:hover ~ label { color: #f59e0b; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h3>⭐ ให้คะแนนที่จอดรถ</h3>
-        <p>สถานที่: <b><?= htmlspecialchars($booking['title']) ?></b></p>
-        
-        <form method="POST">
-            <label><b>เลือกคะแนน (1 - 5 ดาว):</b></label>
-            <div class="star-rating">
-                <input type="radio" id="star5" name="rating" value="5" required><label for="star5">★</label>
-                <input type="radio" id="star4" name="rating" value="4"><label for="star4">★</label>
-                <input type="radio" id="star3" name="rating" value="3"><label for="star3">★</label>
-                <input type="radio" id="star2" name="rating" value="2"><label for="star2">★</label>
-                <input type="radio" id="star1" name="rating" value="1"><label for="star1">★</label>
-            </div>
-            
-            <label><b>ความคิดเห็นเพิ่มเติม:</b></label>
-            <textarea name="comment" placeholder="เขียนความประทับใจหรือข้อเสนอแนะ..."></textarea>
-            
-            <button type="submit">ส่งรีวิว</button>
-        </form>
+    <div class="container py-5">
+        <div class="card border-0 shadow-sm rounded-4 mx-auto p-4" style="max-width: 420px; background: white;">
+            <h4 class="fw-bold text-center mb-3">ให้คะแนนที่จอดรถ</h4>
+            <form method="POST">
+                <div class="star-rating mb-3">
+                    <input type="radio" id="star5" name="rating" value="5" checked><label for="star5" class="fa-solid fa-star"></label>
+                    <input type="radio" id="star4" name="rating" value="4"><label for="star4" class="fa-solid fa-star"></label>
+                    <input type="radio" id="star3" name="rating" value="3"><label for="star3" class="fa-solid fa-star"></label>
+                    <input type="radio" id="star2" name="rating" value="2"><label for="star2" class="fa-solid fa-star"></label>
+                    <input type="radio" id="star1" name="rating" value="1"><label for="star1" class="fa-solid fa-star"></label>
+                </div>
+                <div class="mb-3">
+                    <textarea name="comment" class="form-control" rows="3" placeholder="ความพึงพอใจเกี่ยวกับการจอดรถ..."></textarea>
+                </div>
+                <button type="submit" class="btn btn-warning w-100 fw-bold rounded-pill">ส่งรีวิว</button>
+            </form>
+        </div>
     </div>
 </body>
 </html>

@@ -47,69 +47,75 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>เพิ่มที่จอดรถใหม่</title>
+    <!-- Google Font & FontAwesome & Bootstrap 5 -->
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background: #f8f9fa; }
-        .form-box { background: white; padding: 25px; border-radius: 8px; max-width: 550px; margin: 0 auto; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-        .form-group { margin-bottom: 15px; }
-        .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
-        .form-group input, .form-group textarea { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
-        .req { color: red; }
-        #pickerMap { height: 300px; width: 100%; border-radius: 6px; border: 1px solid #ccc; margin-top: 5px; }
-        .btn { background: #28a745; color: white; border: none; padding: 10px; border-radius: 4px; cursor: pointer; width: 100%; font-size: 16px; margin-top: 10px; }
+        body { font-family: 'Prompt', sans-serif; background-color: #f4f6f9; }
+        .card-custom { border: none; border-radius: 16px; box-shadow: 0 4px 25px rgba(0,0,0,0.06); max-width: 600px; margin: 30px auto; background: white; }
+        #pickerMap { height: 280px; width: 100%; border-radius: 12px; border: 1px solid #cbd5e1; margin-top: 8px; }
     </style>
 </head>
 <body>
-    <div class="form-box">
-        <h2>🅿️ เพิ่มที่จอดรถใหม่</h2>
-        <?php if ($message): ?><p style="color:red;"><?= $message ?></p><?php endif; ?>
-        
-        <form method="POST" enctype="multipart/form-data">
-            <div class="form-group">
-                <label>ชื่อสถานที่จอดรถ <span class="req">*</span></label>
-                <input type="text" name="title" required placeholder="เช่น ที่จอดรถหน้าบ้าน ล็อก A">
-            </div>
-
-            <div class="form-group">
-                <label>เบอร์โทรศัพท์ติดต่อ <span class="req">*</span></label>
-                <input type="tel" name="contact_phone" required placeholder="เช่น 0812345678">
-            </div>
-
-            <div class="form-group">
-                <label>จุดสังเกต / รายละเอียดเพิ่มเติม</label>
-                <textarea name="description" rows="3" placeholder="เช่น อยู่ใกล้ต้นไม้ใหญ่, ติดร้านน้ำชา, ซอย 5"></textarea>
-            </div>
-
-            <div class="form-group">
-                <label>📍 เลือกตำแหน่งบนแผนที่ (คลิกที่แผนที่เพื่อวางหมุด) <span class="req">*</span></label>
-                <div id="pickerMap"></div>
-            </div>
-
-            <div style="display: flex; gap: 10px;">
-                <div class="form-group" style="flex: 1;">
-                    <label>ละติจูด (Latitude) <span class="req">*</span></label>
-                    <input type="text" id="latitude" name="latitude" required readonly style="background: #e9ecef;">
+    <div class="container py-3">
+        <div class="card card-custom p-4 p-md-5">
+            <h3 class="fw-bold text-dark mb-4"><i class="fa-solid fa-square-plus text-success me-2"></i>เพิ่มที่จอดรถใหม่</h3>
+            
+            <?php if ($message): ?>
+                <div class="alert alert-danger py-2 rounded-3 mb-3"><?= $message ?></div>
+            <?php endif; ?>
+            
+            <form method="POST" enctype="multipart/form-data">
+                <div class="mb-3">
+                    <label class="form-label fw-bold">ชื่อสถานที่จอดรถ <span class="text-danger">*</span></label>
+                    <input type="text" name="title" class="form-control" required placeholder="เช่น ที่จอดรถหน้าบ้าน ล็อก A">
                 </div>
-                <div class="form-group" style="flex: 1;">
-                    <label>ลองจิจูด (Longitude) <span class="req">*</span></label>
-                    <input type="text" id="longitude" name="longitude" required readonly style="background: #e9ecef;">
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">เบอร์โทรศัพท์ติดต่อ <span class="text-danger">*</span></label>
+                    <input type="tel" name="contact_phone" class="form-control" required placeholder="เช่น 0812345678">
                 </div>
-            </div>
 
-            <div class="form-group">
-                <label>ราคาต่อชั่วโมง (บาท) <span class="req">*</span></label>
-                <input type="number" step="0.01" name="price_per_hour" required placeholder="50">
-            </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">จุดสังเกต / รายละเอียดเพิ่มเติม</label>
+                    <textarea name="description" class="form-control" rows="3" placeholder="เช่น อยู่ใกล้ต้นไม้ใหญ่, ติดร้านน้ำชา, ซอย 5"></textarea>
+                </div>
 
-            <div class="form-group">
-                <label>รูปภาพสถานที่</label>
-                <input type="file" name="image" accept="image/*">
-            </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold"><i class="fa-solid fa-map-location-dot text-primary me-1"></i> คลิกเลือกตำแหน่งบนแผนที่ <span class="text-danger">*</span></label>
+                    <div id="pickerMap"></div>
+                </div>
 
-            <button type="submit" class="btn">บันทึกข้อมูล</button>
-        </form>
-        <br>
-        <a href="my_spots.php">← กลับหน้าจัดการที่จอดรถ</a>
+                <div class="row g-2 mb-3">
+                    <div class="col-6">
+                        <label class="form-label fw-bold fs-7">ละติจูด (Latitude) <span class="text-danger">*</span></label>
+                        <input type="text" id="latitude" name="latitude" class="form-control bg-light" required readonly>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label fw-bold fs-7">ลองจิจูด (Longitude) <span class="text-danger">*</span></label>
+                        <input type="text" id="longitude" name="longitude" class="form-control bg-light" required readonly>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">ราคาต่อชั่วโมง (บาท) <span class="text-danger">*</span></label>
+                    <input type="number" step="0.01" name="price_per_hour" class="form-control" required placeholder="50">
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label fw-bold">รูปภาพสถานที่</label>
+                    <input type="file" name="image" class="form-control" accept="image/*">
+                </div>
+
+                <button type="submit" class="btn btn-success w-100 py-2.5 rounded-3 fw-bold"><i class="fa-solid fa-floppy-disk me-1"></i> บันทึกข้อมูล</button>
+            </form>
+            
+            <div class="text-center mt-4">
+                <a href="my_spots.php" class="text-decoration-none text-secondary"><i class="fa-solid fa-arrow-left me-1"></i> กลับหน้าจัดการที่จอดรถ</a>
+            </div>
+        </div>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -124,7 +130,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             attribution: '© OpenStreetMap contributors'
         }).addTo(map);
 
-        // ดึงตำแหน่งปัจจุบันของผู้ใช้เพื่อเลื่อนแผนที่ไปหาอัตโนมัติ
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(function(position) {
                 var lat = position.coords.latitude;
@@ -133,7 +138,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             });
         }
 
-        // เมื่อคลิกบนแผนที่ จะใส่หมุดและกรอกพิกัดลงใน Input อัตโนมัติ
         map.on('click', function(e) {
             var lat = e.latlng.lat.toFixed(6);
             var lng = e.latlng.lng.toFixed(6);

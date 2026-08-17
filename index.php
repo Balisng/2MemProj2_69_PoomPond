@@ -1,250 +1,438 @@
 <?php
 session_start();
 require_once 'db.php';
+
+// เช็กสิทธิ์การเป็นผู้ให้เช่า
+$is_owner = false;
+if (isset($_SESSION['user_id'])) {
+    $role = strtolower(trim($_SESSION['role'] ?? ''));
+    if (in_array($role, ['owner', 'admin', '1', 'seller', 'lessor', '']) || !isset($_SESSION['role'])) {
+        $is_owner = true;
+    }
+}
+
+// ดึงรายการสถานที่พร้อมคำนวณคะแนนดาวเฉลี่ย และจำนวนรีวิว
+$sql = "SELECT p.*, u.full_name AS owner_name, u.phone AS owner_phone,
+               COALESCE(AVG(r.rating), 0) AS avg_rating, 
+               COUNT(r.review_id) AS total_reviews 
+        FROM parking_spots p 
+        LEFT JOIN users u ON p.user_id = u.user_id 
+        LEFT JOIN reviews r ON p.spot_id = r.spot_id 
+        GROUP BY p.spot_id 
+        ORDER BY p.spot_id DESC";
+
+$result = $conn->query($sql);
+$spots = [];
+if ($result && $result->num_rows > 0) {
+    while ($row = $result->fetch_assoc()) {
+        $spots[] = $row;
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="th">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ระบบค้นหาและจองที่จอดรถ</title>
+    <title>ระบบจองที่จอดรถ - ค้นหาที่จอดรถใกล้คุณ</title>
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
     <style>
-        body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
-        .navbar { background: #333; color: white; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; }
-        .navbar a { color: white; text-decoration: none; margin-left: 15px; }
-        .navbar a.btn { background: #007bff; padding: 6px 12px; border-radius: 4px; }
-        .navbar a.btn-success { background: #28a745; }
-        .container { padding: 20px; }
-        .search-box { margin-bottom: 15px; display: flex; gap: 10px; }
-        .search-box input { padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
-        #map { height: 520px; width: 100%; border-radius: 10px; }
-
-        .modal-overlay { display: none; position: fixed; z-index: 9999; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; }
-        .modal-content { background: white; padding: 20px; border-radius: 8px; width: 350px; max-height: 80vh; overflow-y: auto; box-shadow: 0 2px 10px rgba(0,0,0,0.3); }
-        .modal-group { margin-bottom: 15px; }
-        .modal-group label { display: block; font-size: 14px; margin-bottom: 5px; font-weight: bold; }
-        .modal-group input { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
-        .btn-submit { width: 100%; background: #28a745; color: white; border: none; padding: 10px; border-radius: 4px; cursor: pointer; font-size: 15px; }
-        .btn-cancel { width: 100%; background: #6c757d; color: white; border: none; padding: 8px; border-radius: 4px; cursor: pointer; margin-top: 5px; }
-
-        .review-item { border-bottom: 1px solid #eee; padding: 8px 0; }
-        .review-item:last-child { border-bottom: none; }
-        .review-user { font-weight: bold; font-size: 13px; color: #333; }
-        .review-stars { color: #f39c12; font-size: 12px; }
-        .review-comment { font-size: 13px; color: #555; margin-top: 3px; }
+        * { font-family: 'Prompt', sans-serif; }
+        body, html { height: 100%; margin: 0; padding: 0; overflow-x: hidden; background-color: #f8fafc; }
+        .navbar-custom { background-color: #0f172a; z-index: 1030; }
+        .main-wrapper { height: calc(100vh - 62px); display: flex; flex-direction: row; }
+        .sidebar-panel { width: 380px; height: 100%; overflow-y: auto; background: #ffffff; border-right: 1px solid #e2e8f0; z-index: 1000; display: flex; flex-direction: column; }
+        .sidebar-header { padding: 15px; background: #fff; position: sticky; top: 0; z-index: 10; border-bottom: 1px solid #f1f5f9; }
+        .spot-card { border: 1px solid #e2e8f0; border-radius: 12px; transition: all 0.2s ease-in-out; cursor: pointer; background: #fff; }
+        .spot-card:hover { border-color: #0d6efd; box-shadow: 0 4px 12px rgba(13, 110, 253, 0.12); transform: translateY(-2px); }
+        #map { flex: 1; height: 100%; width: 100%; z-index: 1; }
+        
+        /* สไตล์ Leaflet Popup */
+        .leaflet-popup-content-wrapper { border-radius: 16px; padding: 4px; box-shadow: 0 10px 25px rgba(0,0,0,0.15); }
+        .leaflet-popup-content { width: 260px !important; margin: 12px 14px !important; }
+        .popup-box { width: 100%; }
+        .detail-box { background-color: #f1f5f9; border-radius: 10px; padding: 10px; font-size: 0.85rem; color: #475569; }
+        .my-location-btn { position: absolute; bottom: 30px; right: 20px; z-index: 999; background: white; border: none; border-radius: 50%; width: 48px; height: 48px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: flex; align-items: center; justify-content: center; cursor: pointer; color: #0d6efd; font-size: 1.2rem; }
+        .my-location-btn:hover { background: #0d6efd; color: white; }
+        @media (max-width: 768px) { .main-wrapper { flex-direction: column-reverse; } .sidebar-panel { width: 100%; height: 50vh; } #map { height: 50vh; } }
     </style>
 </head>
 <body>
 
-    <div class="navbar">
-        <h3 style="margin:0;">🚗 Parking App</h3>
-        <div>
-            <?php if (isset($_SESSION['user_id'])): ?>
-                <span>ยินดีต้อนรับ, <b><?= htmlspecialchars($_SESSION['full_name']) ?></b></span>
-                <a href="my_bookings.php">ประวัติการจอง</a>
-                <a href="my_spots.php" style="background:#17a2b8;" class="btn">ที่จอดรถของฉัน</a>
-                <a href="logout.php" style="color: #ff6b6b;">ออกจากระบบ</a>
-            <?php else: ?>
-                <a href="login.php" class="btn">เข้าสู่ระบบ</a>
-                <a href="register.php" class="btn btn-success">สมัครสมาชิก</a>
-            <?php endif; ?>
-        </div>
-    </div>
+    <!-- Navbar Header -->
+    <nav class="navbar navbar-expand-lg navbar-dark navbar-custom px-3">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold fs-5" href="index.php">
+                <i class="fa-solid fa-square-parking text-warning me-2 fs-4"></i>Parking App
+            </a>
+            <button class="navbar-toggler border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navbarText">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarText">
+                <ul class="navbar-nav me-auto mb-2 mb-lg-0"></ul>
+                <div class="d-flex align-items-center gap-2">
+                    <?php if (isset($_SESSION['user_id'])): ?>
+                        <span class="text-white-50 me-2 fs-7 d-none d-md-inline">
+                            <i class="fa-solid fa-user-circle me-1 text-light"></i><?= htmlspecialchars($_SESSION['full_name'] ?? 'ผู้ใช้งาน') ?>
+                        </span>
+                        
+                        <a href="my_bookings.php" class="btn btn-outline-light btn-sm rounded-pill px-3">
+                            <i class="fa-solid fa-clock-rotate-left me-1"></i> ประวัติการจอง
+                        </a>
 
-    <div class="container">
-        <h2>📍 ค้นหาและจองที่จอดรถใกล้เคียง</h2>
-        
-        <div class="search-box">
-            <input type="text" id="searchName" placeholder="🔍 ค้นหาตามชื่อสถานที่..." onkeyup="filterSpots()" style="flex: 2;">
-            <input type="number" id="maxPrice" placeholder="💰 ราคาไม่เกิน (บาท/ชม.)..." onkeyup="filterSpots()" style="flex: 1;">
-        </div>
+                        <?php if ($is_owner): ?>
+                            <a href="add_spot.php" class="btn btn-success btn-sm rounded-pill px-3 fw-bold">
+                                <i class="fa-solid fa-circle-plus me-1"></i> เพิ่มที่จอดรถ
+                            </a>
+                            <a href="my_spots.php" class="btn btn-warning btn-sm rounded-pill px-3 fw-bold">
+                                <i class="fa-solid fa-bars-progress me-1"></i> จัดการที่จอดรถ
+                            </a>
+                        <?php endif; ?>
 
-        <div id="map"></div>
-    </div>
-
-    <!-- Modal จองวันเวลา -->
-    <div id="bookingModal" class="modal-overlay">
-        <div class="modal-content">
-            <h3 style="margin-top:0;">🗓️ จองที่จอดรถล่วงหน้า</h3>
-            <input type="hidden" id="modalSpotId">
-            <input type="hidden" id="modalPrice">
-            
-            <div class="modal-group">
-                <label>เวลาที่เริ่มเข้าจอด:</label>
-                <input type="datetime-local" id="modalStartTime">
+                        <a href="logout.php" class="btn btn-danger btn-sm rounded-pill px-3">
+                            <i class="fa-solid fa-right-from-bracket me-1"></i> ออกจากระบบ
+                        </a>
+                    <?php else: ?>
+                        <a href="login.php" class="btn btn-warning btn-sm fw-bold rounded-pill px-3">
+                            <i class="fa-solid fa-right-to-bracket me-1"></i> เข้าสู่ระบบ
+                        </a>
+                        <a href="register.php" class="btn btn-outline-light btn-sm rounded-pill px-3">
+                            สมัครสมาชิก
+                        </a>
+                    <?php endif; ?>
+                </div>
             </div>
-            
-            <div class="modal-group">
-                <label>จำนวนชั่วโมง:</label>
-                <input type="number" id="modalHours" value="1" min="1">
+        </div>
+    </nav>
+
+    <!-- Main Content Area -->
+    <div class="main-wrapper">
+        <div class="sidebar-panel">
+            <div class="sidebar-header shadow-sm">
+                <h6 class="fw-bold mb-2 text-dark"><i class="fa-solid fa-magnifying-glass me-1 text-primary"></i> ค้นหาที่จอดรถ</h6>
+                <div class="input-group mb-2">
+                    <span class="input-group-text bg-light border-end-0"><i class="fa-solid fa-search text-muted"></i></span>
+                    <input type="text" id="searchInput" class="form-control bg-light border-start-0" placeholder="พิมพ์ชื่อสถานที่..." onkeyup="filterSpots()">
+                </div>
+
+                <?php if ($is_owner): ?>
+                    <a href="add_spot.php" class="btn btn-success btn-sm w-100 rounded-3 fw-bold shadow-sm">
+                        <i class="fa-solid fa-plus-circle me-1"></i> + เพิ่มที่จอดรถใหม่
+                    </a>
+                <?php endif; ?>
             </div>
-            
-            <button onclick="confirmBooking()" class="btn-submit">ยืนยันการจอง</button>
-            <button onclick="closeModal('bookingModal')" class="btn-cancel">ยกเลิก</button>
+
+            <div class="p-3" id="spotList">
+                <?php if (empty($spots)): ?>
+                    <div class="text-center text-muted py-5">
+                        <i class="fa-solid fa-map-location-dot display-4 mb-3 text-secondary"></i>
+                        <p class="m-0">ยังไม่มีข้อมูลที่จอดรถในระบบ</p>
+                    </div>
+                <?php else: ?>
+                    <?php foreach ($spots as $spot): ?>
+                        <div class="spot-card p-3 mb-3 spot-item" 
+                             data-title="<?= htmlspecialchars($spot['title'] ?? '') ?>" 
+                             data-desc="<?= htmlspecialchars($spot['description'] ?? '') ?>"
+                             onclick="focusMap(<?= $spot['latitude'] ?>, <?= $spot['longitude'] ?>, <?= $spot['spot_id'] ?>)">
+                            
+                            <div class="d-flex justify-content-between align-items-start mb-1">
+                                <h6 class="fw-bold text-dark m-0"><?= htmlspecialchars($spot['title'] ?? 'ที่จอดรถ') ?></h6>
+                                <span class="badge bg-success-subtle text-success border border-success-subtle rounded-pill">
+                                    <?= number_format($spot['price_per_hour'] ?? 0, 0) ?> ฿/ชม.
+                                </span>
+                            </div>
+
+                            <div class="mb-2 fs-7 d-flex align-items-center justify-content-between">
+                                <div>
+                                    <?php if (($spot['total_reviews'] ?? 0) > 0): ?>
+                                        <span class="text-warning fw-bold"><i class="fa-solid fa-star me-1"></i><?= number_format($spot['avg_rating'], 1) ?></span>
+                                        <span class="text-muted"> (<?= $spot['total_reviews'] ?> รีวิว)</span>
+                                    <?php else: ?>
+                                        <span class="text-muted"><i class="fa-regular fa-star me-1"></i>ยังไม่มีรีวิว</span>
+                                    <?php endif; ?>
+                                </div>
+                                <button type="button" class="btn btn-link btn-sm text-decoration-none p-0 fw-bold" 
+                                        onclick="event.stopPropagation(); loadReviews(<?= $spot['spot_id'] ?>, '<?= htmlspecialchars($spot['title'] ?? '', ENT_QUOTES) ?>')">
+                                    <i class="fa-solid fa-comments me-1"></i>อ่านรีวิว
+                                </button>
+                            </div>
+
+                            <div class="detail-box mb-2">
+                                <i class="fa-solid fa-thumbtack text-danger me-1"></i>
+                                <?= htmlspecialchars(mb_strimwidth($spot['description'] ?? 'ไม่มีรายละเอียด', 0, 60, '...')) ?>
+                            </div>
+
+                            <div class="d-flex justify-content-between align-items-center mt-2">
+                                <span class="fs-7 text-muted">
+                                    <i class="fa-solid fa-phone me-1"></i><?= htmlspecialchars($spot['contact_phone'] ?? $spot['owner_phone'] ?? '-') ?>
+                                </span>
+                                <button type="button" class="btn btn-sm btn-success text-white rounded-pill px-3 fw-bold" 
+                                        onclick="event.stopPropagation(); openBookingModal(<?= $spot['spot_id'] ?>, '<?= htmlspecialchars($spot['title'] ?? '', ENT_QUOTES) ?>', <?= $spot['price_per_hour'] ?? 0 ?>)">
+                                    <i class="fa-solid fa-calendar-check me-1"></i> จองเลย
+                                </button>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </div>
+        </div>
+
+        <div style="position: relative; flex: 1;">
+            <div id="map"></div>
+            <button class="my-location-btn" onclick="locateUser()" title="ระบุตำแหน่งของฉัน">
+                <i class="fa-solid fa-crosshairs"></i>
+            </button>
         </div>
     </div>
 
-    <!-- Modal ดูรีวิว -->
-    <div id="reviewsModal" class="modal-overlay">
-        <div class="modal-content">
-            <h3 style="margin-top:0;">⭐ รีวิวจากผู้ใช้งาน</h3>
-            <div id="reviewsList">กำลังโหลดรีวิว...</div>
-            <button onclick="closeModal('reviewsModal')" class="btn-cancel" style="margin-top:15px;">ปิด</button>
+    <!-- Modal อ่านรีวิว -->
+    <div class="modal fade" id="reviewModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content border-0 shadow rounded-4">
+                <div class="modal-header bg-light">
+                    <h5 class="modal-title fw-bold" id="reviewModalTitle"><i class="fa-solid fa-star text-warning me-2"></i>รีวิวสถานที่</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body p-4" id="reviewModalBody">
+                    <div class="text-center py-4"><div class="spinner-border text-primary" role="status"></div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal จองที่จอดรถ -->
+    <div class="modal fade" id="bookingModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 shadow rounded-4">
+                <div class="modal-header bg-dark text-white">
+                    <h5 class="modal-title fw-bold"><i class="fa-solid fa-square-parking text-warning me-2"></i>จองที่จอดรถ</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form action="save_booking.php" method="POST">
+                    <div class="modal-body p-4">
+                        <input type="hidden" name="spot_id" id="modal_spot_id">
+                        
+                        <h5 class="fw-bold text-primary mb-1" id="modal_spot_title"></h5>
+                        <p class="text-muted fs-7 mb-3">อัตราบริการ: <span class="fw-bold text-success" id="modal_spot_price"></span> บาท/ชม.</p>
+                        
+                        <div class="mb-3">
+                            <label class="form-label fw-bold"><i class="fa-regular fa-calendar-days text-primary me-1"></i> วันและเวลาที่เริ่มจอด</label>
+                            <input type="datetime-local" name="start_time" class="form-control" value="<?= date('Y-m-d\TH:i') ?>" required>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-bold"><i class="fa-regular fa-clock text-primary me-1"></i> จำนวนระยะเวลา (ชั่วโมง)</label>
+                            <select name="hours" id="modal_hours" class="form-select" onchange="updateBookingTotal()">
+                                <?php for($i=1; $i<=24; $i++): ?>
+                                    <option value="<?= $i ?>"><?= $i ?> ชั่วโมง</option>
+                                <?php endfor; ?>
+                            </select>
+                        </div>
+
+                        <div class="p-3 bg-light border rounded-3 text-end">
+                            <small class="text-muted d-block">ราคารวมโดยประมาณ</small>
+                            <span class="fs-4 fw-bold text-success" id="modal_total_price">0.00</span> บาท
+                        </div>
+                    </div>
+                    <div class="modal-footer bg-light border-0">
+                        <button type="button" class="btn btn-secondary rounded-pill px-4" data-bs-dismiss="modal">ยกเลิก</button>
+                        <button type="submit" class="btn btn-success rounded-pill px-4 fw-bold"><i class="fa-solid fa-circle-check me-1"></i> ยืนยันจอง</button>
+                    </div>
+                </form>
+            </div>
         </div>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
     <script>
-        var map = L.map('map').setView([7.0085, 100.4747], 14);
-        var allSpots = [];
-        var markersGroup = L.layerGroup().addTo(map);
+        var map = L.map('map').setView([7.0087, 100.4747], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© OpenStreetMap contributors'
-        }).addTo(map);
+        var spots = <?= json_encode($spots, JSON_UNESCAPED_UNICODE) ?>;
+        var markers = {};
+        var currentPricePerHour = 0;
 
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(function(position) {
-                var userLat = position.coords.latitude;
-                var userLng = position.coords.longitude;
-                map.setView([userLat, userLng], 14);
-                L.marker([userLat, userLng]).addTo(map).bindPopup('<b>คุณอยู่ที่นี่</b>');
-            });
-        }
+        spots.forEach(function(spot) {
+            if (spot.latitude && spot.longitude) {
+                var lat = parseFloat(spot.latitude);
+                var lng = parseFloat(spot.longitude);
 
-        fetch('get_spots.php')
-            .then(response => response.json())
-            .then(data => {
-                allSpots = data;
-                renderMarkers(allSpots);
-            });
+                // ดักจับชื่อคอลัมน์รูปภาพทั้งหมดที่อาจเป็นไปได้ในฐานข้อมูล
+                var rawImg = spot.image || spot.image_url || spot.image_path || spot.spot_image || spot.photo || spot.picture || spot.img || '';
+                var spotImg = rawImg.trim();
 
-        function renderMarkers(spots) {
-            markersGroup.clearLayers();
-            spots.forEach(spot => {
-                var ratingBtn = spot.avg_rating > 0 
-                    ? `<span onclick="openReviewsModal(${spot.spot_id})" style="color:#f39c12; font-weight:bold; cursor:pointer; text-decoration:underline;">⭐ ${spot.avg_rating} (${spot.total_reviews} รีวิว - คลิกเพื่ออ่าน)</span>` 
-                    : '<span style="color:#888;">⭐ ยังไม่มีรีวิว</span>';
-                
-                var imgHTML = spot.image ? `<img src="uploads/${spot.image}" style="width:100%; height:110px; object-fit:cover; border-radius:6px; margin-bottom:8px;">` : '';
-                var descText = spot.description && spot.description.trim() !== '' ? spot.description : 'ไม่มีรายละเอียดเพิ่มเติม';
-                var ownerName = spot.owner_name ? spot.owner_name : 'ไม่ระบุผู้ดูแล';
-                var ownerPhone = spot.owner_phone ? spot.owner_phone : '-';
+                // ปรับแต่ง Path ของรูปภาพให้ถูกต้องอัตโนมัติ
+                if (spotImg !== '') {
+                    if (!spotImg.startsWith('http') && !spotImg.startsWith('uploads/') && !spotImg.startsWith('/') && !spotImg.startsWith('./')) {
+                        spotImg = 'uploads/' + spotImg;
+                    }
+                }
 
-                var marker = L.marker([spot.latitude, spot.longitude]);
+                // สร้าง HTML สำหรับแสดงรูปภาพด้านบนสุด
+                var imageHTML = (spotImg !== '')
+                    ? `<div class="mb-2" style="margin: -4px -4px 10px -4px; overflow: hidden; border-radius: 12px 12px 0 0;">
+                        <img src="${spotImg}" class="img-fluid w-100" style="height: 140px; object-fit: cover;" alt="รูปสถานที่" onerror="this.onerror=null; this.src='uploads/'+'${rawImg}';">
+                       </div>`
+                    : '';
+
+                var ratingHTML = (spot.total_reviews > 0)
+                    ? `<span class="text-warning fw-bold"><i class="fa-solid fa-star me-1"></i>${parseFloat(spot.avg_rating).toFixed(1)}</span> <small class="text-muted">(${spot.total_reviews} รีวิว)</small>`
+                    : `<small class="text-muted"><i class="fa-regular fa-star me-1"></i>ยังไม่มีรีวิว</small>`;
+
                 var popupContent = `
-                    <div style="width:230px; font-family: Arial, sans-serif;">
-                        ${imgHTML}
-                        <h3 style="margin:0 0 5px 0; font-size:16px; color:#333;">${spot.title}</h3>
-                        <p style="margin:0 0 6px 0; font-size:13px;">${ratingBtn}</p>
-                        
-                        <div style="background:#f8f9fa; padding:8px; border-radius:5px; margin-bottom:8px; font-size:12px; color:#555; line-height:1.4;">
-                            <b>📌 จุดสังเกต / รายละเอียด:</b><br>${descText}
+                    <div class="popup-box">
+                        <!-- 1. รูปภาพสถานที่ด้านบนสุด -->
+                        ${imageHTML}
+
+                        <!-- 2. ชื่อสถานที่ + คะแนนรีวิว + ปุ่มนำทางอัตโนมัติ -->
+                        <div class="d-flex justify-content-between align-items-start mb-2 pe-1">
+                            <div>
+                                <h6 class="fw-bold mb-0 text-dark">${spot.title || 'ที่จอดรถ'}</h6>
+                                <div class="mt-1">${ratingHTML}</div>
+                            </div>
+                            <button type="button" onclick="navigateSpot(${lat}, ${lng})" class="btn btn-primary btn-sm rounded-pill px-2 py-1 text-nowrap fw-bold shadow-sm ms-2 text-white" style="font-size: 0.75rem;">
+                                <i class="fa-solid fa-diamond-turn-right me-1 text-white"></i>นำทาง
+                            </button>
                         </div>
 
-                        <p style="margin:2px 0; font-size:12px; color:#444;">📞 <b>ผู้ดูแล:</b> ${ownerName} (${ownerPhone})</p>
-                        <p style="margin:2px 0 8px 0; font-size:13px; color:#28a745; font-weight:bold;">💰 ราคา: ${spot.price_per_hour} บาท/ชม.</p>
-                        
-                        <div style="display:flex; gap:5px;">
-                            <a href="https://www.google.com/maps/dir/?api=1&destination=${spot.latitude},${spot.longitude}" target="_blank" style="flex:1; text-align:center; background:#007bff; color:white; padding:6px 0; border-radius:4px; text-decoration:none; font-size:12px; font-weight:bold;">🗺️ นำทาง</a>
-                            <button onclick="openBookingModal(${spot.spot_id}, ${spot.price_per_hour})" style="flex:1; background:#28a745; color:white; border:none; padding:6px 0; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;">🗓️ จองเลย</button>
+                        <!-- 3. รายละเอียด / จุดสังเกต -->
+                        <div class="detail-box mb-2">
+                            <i class="fa-solid fa-thumbtack text-danger me-1"></i> ${spot.description || 'ไม่มีรายละเอียด'}
+                        </div>
+
+                        <!-- 4. เบอร์โทร และ ราคา -->
+                        <div class="mb-1 fs-7"><i class="fa-solid fa-phone text-primary me-1"></i> ${spot.contact_phone || spot.owner_phone || spot.phone || '-'}</div>
+                        <div class="mb-3 text-success fw-bold">${parseFloat(spot.price_per_hour || 0).toFixed(0)} บาท/ชม.</div>
+
+                        <!-- 5. ปุ่ม อ่านรีวิว และ จองเลย ด้านล่าง -->
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-outline-primary btn-sm rounded-3 flex-fill fw-bold" onclick="loadReviews(${spot.spot_id}, '${(spot.title || '').replace(/'/g, "\\'")}')">
+                                <i class="fa-solid fa-comments me-1"></i> รีวิว
+                            </button>
+                            <button type="button" class="btn btn-success btn-sm rounded-3 flex-fill text-white fw-bold" onclick="openBookingModal(${spot.spot_id}, '${(spot.title || '').replace(/'/g, "\\'")}', ${spot.price_per_hour || 0})">
+                                <i class="fa-solid fa-calendar-check me-1"></i> จองเลย
+                            </button>
                         </div>
                     </div>
                 `;
-                marker.bindPopup(popupContent);
-                markersGroup.addLayer(marker);
-            });
+
+                var marker = L.marker([lat, lng]).addTo(map).bindPopup(popupContent);
+                markers[spot.spot_id] = marker;
+            }
+        });
+
+        // ฟังก์ชันนำทางอัตโนมัติไปยังจุดหมาย
+        function navigateSpot(destLat, destLng) {
+            if ("geolocation" in navigator) {
+                navigator.geolocation.getCurrentPosition(
+                    function(pos) {
+                        var originLat = pos.coords.latitude;
+                        var originLng = pos.coords.longitude;
+                        var url = `https://www.google.com/maps/dir/?api=1&origin=${originLat},${originLng}&destination=${destLat},${destLng}&travelmode=driving`;
+                        window.open(url, '_blank');
+                    },
+                    function(error) {
+                        // ถ้าดึงตำแหน่งปัจจุบันไม่สำเร็จ ให้ส่งไปโหมดนำทางโดยใช้ตำแหน่งอุปกรณ์อัตโนมัติ
+                        var url = `https://www.google.com/maps/dir/?api=1&destination=${destLat},${destLng}&travelmode=driving`;
+                        window.open(url, '_blank');
+                    },
+                    { enableHighAccuracy: true, timeout: 5000 }
+                );
+            } else {
+                var url = `https://www.google.com/maps/dir/?api=1&destination=${destLat},${destLng}&travelmode=driving`;
+                window.open(url, '_blank');
+            }
         }
 
-        function openReviewsModal(spotId) {
-            var listContainer = document.getElementById('reviewsList');
-            listContainer.innerHTML = 'กำลังโหลดรีวิว...';
-            document.getElementById('reviewsModal').style.display = 'flex';
-
-            fetch(`get_reviews.php?spot_id=${spotId}`)
-                .then(res => res.json())
-                .then(reviews => {
-                    if (reviews.length === 0) {
-                        listContainer.innerHTML = '<p style="color:#777; font-size:14px;">ยังไม่มีรีวิวสำหรับสถานที่นี้</p>';
-                        return;
-                    }
-                    var html = '';
-                    reviews.forEach(r => {
-                        var stars = '⭐'.repeat(r.rating);
-                        var user = r.full_name ? r.full_name : 'ผู้ใช้งาน';
-                        var comment = r.comment ? r.comment : '<i>ไม่มีข้อความรีวิว</i>';
-                        html += `
-                            <div class="review-item">
-                                <div class="review-user">${user}</div>
-                                <div class="review-stars">${stars} (${r.rating}/5)</div>
-                                <div class="review-comment">${comment}</div>
-                            </div>
-                        `;
-                    });
-                    listContainer.innerHTML = html;
-                });
+        function focusMap(lat, lng, spotId) {
+            map.flyTo([lat, lng], 16, { duration: 1.2 });
+            if (markers[spotId]) setTimeout(function() { markers[spotId].openPopup(); }, 500);
         }
 
         function filterSpots() {
-            var searchName = document.getElementById('searchName').value.toLowerCase();
-            var maxPrice = parseFloat(document.getElementById('maxPrice').value);
-
-            var filtered = allSpots.filter(spot => {
-                var matchName = spot.title.toLowerCase().includes(searchName) || (spot.description && spot.description.toLowerCase().includes(searchName));
-                var matchPrice = isNaN(maxPrice) || parseFloat(spot.price_per_hour) <= maxPrice;
-                return matchName && matchPrice;
+            var input = document.getElementById('searchInput').value.toLowerCase();
+            Array.from(document.getElementsByClassName('spot-item')).forEach(function(item) {
+                var title = (item.getAttribute('data-title') || '').toLowerCase();
+                var desc = (item.getAttribute('data-desc') || '').toLowerCase();
+                item.style.display = (title.includes(input) || desc.includes(input)) ? "block" : "none";
             });
-
-            renderMarkers(filtered);
         }
 
-        function openBookingModal(spotId, pricePerHour) {
-            document.getElementById('modalSpotId').value = spotId;
-            document.getElementById('modalPrice').value = pricePerHour;
-            
-            var now = new Date();
-            now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-            document.getElementById('modalStartTime').value = now.toISOString().slice(0, 16);
-
-            document.getElementById('bookingModal').style.display = 'flex';
-        }
-
-        function closeModal(modalId) {
-            document.getElementById(modalId).style.display = 'none';
-        }
-
-        function confirmBooking() {
-            var spotId = document.getElementById('modalSpotId').value;
-            var pricePerHour = document.getElementById('modalPrice').value;
-            var startTime = document.getElementById('modalStartTime').value;
-            var hours = document.getElementById('modalHours').value;
-
-            if (!startTime || hours <= 0) {
-                alert('กรุณากรอกวัน เวลา และจำนวนชั่วโมงให้ถูกต้อง');
-                return;
+        function locateUser() {
+            if ("geolocation" in navigator) {
+                navigator.geolocation.getCurrentPosition(function(pos) {
+                    map.flyTo([pos.coords.latitude, pos.coords.longitude], 15);
+                    L.popup().setLatLng([pos.coords.latitude, pos.coords.longitude]).setContent('<b class="text-primary"><i class="fa-solid fa-location-crosshairs me-1"></i> คุณอยู่ที่นี่</b>').openOn(map);
+                });
             }
+        }
 
-            var formData = new FormData();
-            formData.append('spot_id', spotId);
-            formData.append('start_time', startTime);
-            formData.append('hours', hours);
-            formData.append('price_per_hour', pricePerHour);
+        function loadReviews(spotId, title) {
+            document.getElementById('reviewModalTitle').innerText = 'รีวิว ' + title;
+            var body = document.getElementById('reviewModalBody');
+            body.innerHTML = '<div class="text-center py-4"><div class="spinner-border text-primary" role="status"></div></div>';
+            
+            var modal = new bootstrap.Modal(document.getElementById('reviewModal'));
+            modal.show();
 
-            fetch('save_booking.php', {
-                method: 'POST',
-                body: formData
-            })
-            .then(res => res.json())
-            .then(data => {
-                alert(data.message);
-                closeModal('bookingModal');
-                if (data.status === 'error' && data.message.includes('เข้าสู่ระบบ')) {
-                    window.location.href = 'login.php';
-                } else if (data.status === 'success') {
-                    window.location.href = 'my_bookings.php';
-                }
-            });
+            fetch('get_reviews.php?spot_id=' + spotId)
+                .then(res => res.json())
+                .then(data => {
+                    if (!data || data.length === 0) {
+                        body.innerHTML = '<p class="text-center text-muted my-4"><i class="fa-regular fa-comment-dots display-4 mb-2 d-block"></i>ยังไม่มีผู้รีวิวสถานที่นี้</p>';
+                        return;
+                    }
+                    var html = '';
+                    data.forEach(function(r) {
+                        var stars = '';
+                        for (var i = 1; i <= 5; i++) {
+                            stars += i <= r.rating ? '<i class="fa-solid fa-star text-warning"></i>' : '<i class="fa-regular fa-star text-muted"></i>';
+                        }
+                        html += `
+                            <div class="border-bottom pb-3 mb-3">
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <strong class="text-dark">${r.full_name}</strong>
+                                    <div>${stars}</div>
+                                </div>
+                                <p class="mb-1 text-secondary fs-7">${r.comment || 'ไม่ได้ระบุความเห็น'}</p>
+                                <small class="text-muted fs-8">${r.created_at}</small>
+                            </div>
+                        `;
+                    });
+                    body.innerHTML = html;
+                })
+                .catch(err => {
+                    body.innerHTML = '<p class="text-center text-danger my-4">เกิดข้อผิดพลาดในการดึงข้อมูลรีวิว</p>';
+                });
+        }
+
+        function openBookingModal(spotId, title, price) {
+            <?php if (!isset($_SESSION['user_id'])): ?>
+                window.location.href = 'login.php';
+                return;
+            <?php endif; ?>
+
+            document.getElementById('modal_spot_id').value = spotId;
+            document.getElementById('modal_spot_title').innerText = title;
+            document.getElementById('modal_spot_price').innerText = price;
+            currentPricePerHour = parseFloat(price);
+            
+            document.getElementById('modal_hours').value = 1;
+            updateBookingTotal();
+
+            var modal = new bootstrap.Modal(document.getElementById('bookingModal'));
+            modal.show();
+        }
+
+        function updateBookingTotal() {
+            var h = parseInt(document.getElementById('modal_hours').value) || 1;
+            document.getElementById('modal_total_price').innerText = (h * currentPricePerHour).toFixed(2);
         }
     </script>
 </body>
