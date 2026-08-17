@@ -48,6 +48,7 @@ $result = $stmt->get_result();
     <h2>🅿️ จัดการที่จอดรถของฉัน</h2>
     <p>
         <a href="index.php">← กลับหน้าหลัก</a> | 
+        <a href="owner_bookings.php" style="background:#ffc107; color:black;" class="btn">📥 รายการที่มีผู้จองเข้ามา</a> | 
         <a href="add_spot.php" class="btn btn-add">+ เพิ่มที่จอดรถใหม่</a>
     </p>
 
