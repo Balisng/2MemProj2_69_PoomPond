@@ -49,14 +49,29 @@
                     var popupContent = `
                         <b>${spot.title}</b><br>
                         ราคา: ${spot.price_per_hour} บาท/ชม.<br>
-                        <button onclick="booking(${spot.spot_id})">จองที่จอดนี้</button>
+                        <button onclick="booking(${spot.spot_id}, ${spot.price_per_hour})">จองที่จอดนี้</button>
                     `;
                     marker.bindPopup(popupContent);
                 });
             });
 
-        function booking(spotId) {
-            alert('คุณกดเลือกจองที่จอดรถ ID: ' + spotId);
+        function booking(spotId, pricePerHour) {
+            var hours = prompt("ต้องการจองกี่ชั่วโมง?", "1");
+            if (hours != null && hours > 0) {
+                var formData = new FormData();
+                formData.append('spot_id', spotId);
+                formData.append('hours', hours);
+                formData.append('price_per_hour', pricePerHour);
+
+                fetch('save_booking.php', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(res => res.json())
+                .then(data => {
+                    alert(data.message);
+                });
+            }
         }
     </script>
 </body>
