@@ -8,8 +8,10 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 $user_id = $_SESSION['user_id'];
-$sql = "SELECT b.*, p.title, p.latitude, p.longitude FROM bookings b 
+$sql = "SELECT b.*, p.title, p.latitude, p.longitude, r.review_id 
+        FROM bookings b 
         JOIN parking_spots p ON b.spot_id = p.spot_id 
+        LEFT JOIN reviews r ON b.booking_id = r.booking_id
         WHERE b.user_id = ? ORDER BY b.booking_id DESC";
 
 $stmt = $conn->prepare($sql);
@@ -30,6 +32,7 @@ $result = $stmt->get_result();
         .btn { padding: 4px 8px; text-decoration: none; border-radius: 4px; font-size: 13px; color: white; display: inline-block; }
         .btn-pay { background: #28a745; }
         .btn-cancel { background: #dc3545; }
+        .btn-review { background: #ffc107; color: black; font-weight: bold; }
         .btn-map { color: #007bff; text-decoration: none; font-weight: bold; }
         .badge { padding: 3px 6px; border-radius: 3px; font-size: 12px; font-weight: bold; }
         .bg-pending { background: #fff3cd; color: #856404; }
@@ -84,6 +87,12 @@ $result = $stmt->get_result();
                                 | <a href="upload_slip.php?id=<?= $row['booking_id'] ?>" class="btn btn-pay">💳 จ่ายเงิน</a>
                             <?php endif; ?>
                             | <a href="cancel_booking.php?id=<?= $row['booking_id'] ?>" class="btn btn-cancel" onclick="return confirm('ยืนยันยกเลิกการจอง?')">ยกเลิก</a>
+                        <?php elseif ($row['status'] === 'approved'): ?>
+                            <?php if (!$row['review_id']): ?>
+                                | <a href="rate_spot.php?booking_id=<?= $row['booking_id'] ?>" class="btn btn-review">⭐ รีวิว</a>
+                            <?php else: ?>
+                                | <span style="color:gray; font-size:12px;">รีวิวแล้ว</span>
+                            <?php endif; ?>
                         <?php endif; ?>
                     </td>
                 </tr>
